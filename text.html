@@ -1,2 +1,230 @@
 
-433rtf34frefetertfe
+typedef void (^returnVpnManager)(NETunnelProviderManager * manager);
+
+
+#import "TTZZVpnManager.h"
+
+@implementation TTZZVpnManager
++ (TTZZVpnManager *)sharedInstance {
+    static TTZZVpnManager *vpnManager = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        vpnManager = [[TTZZVpnManager alloc] init];
+       
+       
+    });
+    return vpnManager;
+}
+-(void)initializeTheManager {
+    [self loadProviderManager:^(NETunnelProviderManager *manager) {
+        if (manager) {
+            [self updateVPNStatus:manager];
+        }
+    }];
+    [self addVPNStatusObserver];
+}
+
+-(void)connectVPN:(NSDictionary *)dic ConfigModel:(TTZZConfigModel *)configModel NodeModel:(NodesModel*)NodesModel userInfo:(TTZZUserInfo *)userInfo{
+    self.vpnDic =dic;
+    self.configModel = configModel;
+    self.nodesModel = NodesModel;
+    self.userInfo = userInfo;
+    [self createAndLoadPrividerManager:^(NETunnelProviderManager *manager) {
+        NSError *startError;
+        [manager.connection startVPNTunnelWithOptions:[self gettingDataDic] andReturnError:&startError];
+           if (startError) {
+               NSLog(@"start error %@", startError.localizedDescription);
+           }else{
+               NSLog(@"Connection established");
+           }
+    }];
+}
+
+-(void)disconnectVPN{
+    [self loadProviderManager:^(NETunnelProviderManager *manager) {
+        if(manager){
+            [manager.connection stopVPNTunnel];
+        }
+     
+    }];
+}
+
+-(void)createAndLoadPrividerManager:(returnVpnManager)complete{
+    [NETunnelProviderManager loadAllFromPreferencesWithCompletionHandler:^(NSArray<NETunnelProviderManager *> * _Nullable managers, NSError * _Nullable error) {
+        
+        NETunnelProviderManager *manager = [[NETunnelProviderManager alloc]init];
+        if (managers.count>0) {
+            manager =managers[0];
+            [self delDupConfig:managers];
+        }else{
+            manager = [self setUpProviderManager];
+        }
+        manager.enabled = YES;
+        [self setRulerConfig:manager];
+        [manager saveToPreferencesWithCompletionHandler:^(NSError * _Nullable error) {
+            if(error){
+                complete(manager);
+             
+            }else{
+                [manager loadFromPreferencesWithCompletionHandler:^(NSError * _Nullable error) {
+                    if(error){
+                        complete(nil);
+                        
+                    }
+                    [self addVPNStatusObserver];
+                    complete(manager);
+                }];
+            }
+            
+    }];
+    }];
+}
+
+-(NETunnelProviderManager *)setUpProviderManager
+{
+    NETunnelProviderManager *manager = [[NETunnelProviderManager alloc]init];
+    NETunnelProviderProtocol *conf = [[NETunnelProviderProtocol alloc]init];
+    conf.providerBundleIdentifier = TTZZTuunel_id;
+    conf.serverAddress = TTZZServerAddress;
+    manager.protocolConfiguration = conf;
+    manager.localizedDescription = TTZZLocalizedDescription;
+    return manager;
+}
+-(void)setRulerConfig:(NETunnelProviderManager *)manager{
+    
+    NETunnelProviderProtocol *orignConf = (NETunnelProviderProtocol *)manager.protocolConfiguration;
+    manager.protocolConfiguration = orignConf;
+ 
+}
+
+
+-(void)updateVPNStatus:(NEVPNManager *)manager{
+    switch (manager.connection.status) {
+            
+        case NEVPNStatusConnected:
+          
+            NSLog(@"已连接");
+            [self postObser:VPN_on];
+            break;
+        case NEVPNStatusReasserting:
+          
+            [self postObser:VPN_connecting];
+            break;
+            
+        case NEVPNStatusConnecting:
+          
+            [self postObser:VPN_connecting];
+            break;
+            
+        case NEVPNStatusDisconnecting:
+          
+            [self postObser:VPN_disconnecting];
+            break;
+            
+        case NEVPNStatusInvalid:
+          
+          
+            [self postObser:VPN_off];
+            break;
+            
+        default:
+            [self postObser:VPN_off];
+            break;
+    }
+}
+-(void)postObser:(int)start{
+    [[NSNotificationCenter defaultCenter] postNotificationName:TTZZServiceVPNStatusNotification object:[NSString stringWithFormat:@"%d",start]];
+    
+}
+-(void)addVPNStatusObserver{
+    if(self.observerAdded){
+        return;
+    }
+    [self loadProviderManager:^(NETunnelProviderManager *manager) {
+       
+        if(manager){
+            self.observerAdded = YES;
+            [[NSNotificationCenter defaultCenter] addObserverForName:NEVPNStatusDidChangeNotification object:manager.connection queue:[NSOperationQueue mainQueue]  usingBlock:^(NSNotification * _Nonnull note) {
+                [self updateVPNStatus:manager];
+            }];
+        }
+    }];
+}
+
+-(void)loadProviderManager:(returnVpnManager)complete
+{
+   
+    
+    [NETunnelProviderManager loadAllFromPreferencesWithCompletionHandler:^(NSArray<NETunnelProviderManager *> * _Nullable managers, NSError * _Nullable error) {
+        
+        NETunnelProviderManager *manager = [[NETunnelProviderManager alloc]init];
+        if (managers.count>0) {
+            manager =managers[0];
+            complete(manager) ;
+
+        }else{
+            complete(nil) ;
+        }
+       
+    }];
+}
+
+-(void)delDupConfig:(NSArray *)arr{
+    if(arr.count>1){
+        for(int i = 0;i<arr.count; i++){
+            NETunnelProviderManager *manager = arr[i];
+            [manager removeFromPreferencesWithCompletionHandler:^(NSError * _Nullable error) {
+                
+            }];
+        }
+    }
+    
+}
+-(void)dealloc{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    
+}
+
+//数据源
+-(NSDictionary *)gettingDataDic{
+    
+    NSDictionary *conf;
+#if FUN_DEV
+    conf = @{@"authscheme":@"chacha20-ietf-poly1305"
+                                 ,@"enhost":@"112.73.93.92"
+                                 ,@"password":@"68b662b743"
+                                 ,@"port":@"12052"
+                   ,@"dns-server":[NSString stringWithFormat:@"%@",self.configModel.remote_dns]
+                   ,@"type":[NSString stringWithFormat:@"%@",self.vpnDic[@"vip_type"]]
+                   ,@"flow":@"1"
+                   ,@"uid":[NSString stringWithFormat:@"%@",self.userInfo.uid]
+                   ,@"nodeid":[NSString stringWithFormat:@"%@",self.nodesModel.id]
+                   ,@"deviceid":[[TTZZUUIDManager getDeviceID] md5String]
+                   ,@"speednum":[[TTZZPublicTool sharedInstance] getNowTimeTimestamp]
+             ,@"rule_md5":[NSString stringWithFormat:@"%@",self.configModel.rule_md5]
+             ,@"tr_time":[NSString stringWithFormat:@"%@",self.configModel.tr_time]
+             
+             
+        };
+
+#else
+//    [self.vpnDic stringValueForKey:@"authscheme" default:@""]
+    conf = @{@"authscheme":[self.vpnDic stringValueForKey:@"authscheme" default:@""]
+                             ,@"enhost":[self.vpnDic stringValueForKey:@"enhost" default:@""]
+                             ,@"password":[self.vpnDic stringValueForKey:@"password" default:@""]
+                             ,@"port":[self.vpnDic stringValueForKey:@"port" default:@""]
+               ,@"dns-server":[NSString stringWithFormat:@"%@",self.configModel.remote_dns]
+               ,@"type":[self.vpnDic stringValueForKey:@"vip_type" default:@""]
+               ,@"flow":@"1"
+               ,@"uid":[NSString stringWithFormat:@"%@",self.userInfo.uid]
+               ,@"nodeid":[NSString stringWithFormat:@"%@",self.nodesModel.id]
+               ,@"deviceid":[[TTZZUUIDManager getDeviceID] md5String]
+               ,@"speednum":[[TTZZPublicTool sharedInstance] getNowTimeTimestamp]
+              ,@"rule_md5":[NSString stringWithFormat:@"%@",self.configModel.rule_md5]
+              ,@"tr_time":[NSString stringWithFormat:@"%@",self.configModel.tr_time]
+
+    };
+#endif
+    return conf;
+}
+@end
